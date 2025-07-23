@@ -1,0 +1,136 @@
+networks:
+  internal:
+    driver: bridge
+
+services:
+  kafka:
+    image: bitnami/kafka:latest
+    container_name: kafka
+    environment:
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      - KAFKA_CFG_NODE_ID=0
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    networks:
+      - internal
+    healthcheck:
+        test: ["CMD", "kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+        interval: 30s
+        timeout: 10s
+        retries: 5
+
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "4004:4004"
+    environment:
+      - AUTH_SERVICE_URL=http://auth-service:4005
+    networks:
+      - internal
+
+
+  auth-service-db:
+    image: postgres:latest
+    container_name: auth-service-db
+    environment:
+      - POSTGRES_DB=db
+      - POSTGRES_USER=admin_user
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - /Users/jeremyye/Desktop/auth-data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin_user -d db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://auth-service-db:5432/db
+      - SPRING_DATASOURCE_USERNAME=admin_user
+      - SPRING_DATASOURCE_PASSWORD=password
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update
+      - JWT_SECRET=W2v5WkX9Qz3bRfTmYp3sDv6yPeShVmYq4t7w9zScJv0=
+    depends_on:
+      auth-service-db:
+        condition: service_healthy
+    networks:
+      - internal
+
+
+  patient-service-db:
+    image: postgres:latest
+    container_name: patient-service-db
+    environment:
+      - POSTGRES_DB=db
+      - POSTGRES_USER=admin_user
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - /Users/jeremyye/Desktop/patient-data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin_user -d db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  patient-service:
+    build:
+      context: ./patient-service
+      dockerfile: Dockerfile
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://patient-service-db:5432/db
+      - SPRING_DATASOURCE_USERNAME=admin_user
+      - SPRING_DATASOURCE_PASSWORD=password
+      - SPRING_JPA_HIBERNATE_DDL_AUTO=update
+      - SPRING_SQL_INIT_MODE=always
+      - BILLING_SERVICE_ADDRESS=billing-service
+      - BILLING_SERVICE_GRPC_PORT=9001
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+#      - JAVA_TOOL_OPTIONS=-agentlib:jdwp\=transport\=dt_socket,server\=y,suspend\=n,address\=*:5005;
+    depends_on:
+      patient-service-db:
+        condition: service_healthy
+    networks:
+      - internal
+
+
+  billing-service:
+    build:
+      context: ./billing-service
+      dockerfile: Dockerfile
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - BILLING_SERVICE_PORT=9001
+    depends_on:
+      - kafka
+    networks:
+      - internal
+
+
+  analytics-service:
+    build:
+      context: ./analytics-service
+      dockerfile: Dockerfile
+    environment:
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    depends_on:
+      - kafka
+    networks:
+      - internal
